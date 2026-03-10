@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+chatbot_data.xlsx
+.DS_Store
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+start.bat 
