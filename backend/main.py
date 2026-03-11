@@ -34,18 +34,18 @@ client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
 
 # ── Wikipedia helper ───────────────────────────────────────────────────────────
 
-async def search_wikipedia(query: str, sentences: int = 5) -> dict:
-    """Search Wikipedia and return a summary + URL for the best matching article."""
+async def search_wikipedia(query: str) -> dict:
+    """Search Wikipedia - fetch top 3 results with full content for richer answers."""
     try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            # Step 1: Search for the best matching page title
+        async with httpx.AsyncClient(timeout=15) as http:
+            # Step 1: Search for top 3 matching pages
             search_resp = await http.get(
                 "https://en.wikipedia.org/w/api.php",
                 params={
                     "action": "query",
                     "list": "search",
                     "srsearch": query,
-                    "srlimit": 1,
+                    "srlimit": 3,
                     "format": "json",
                 },
             )
@@ -54,24 +54,52 @@ async def search_wikipedia(query: str, sentences: int = 5) -> dict:
             if not results:
                 return {"found": False, "title": "", "summary": "", "url": ""}
 
-            title = results[0]["title"]
-
-            # Step 2: Get the page summary via REST API
-            summary_resp = await http.get(
-                f"https://en.wikipedia.org/api/rest_v1/page/summary/{title.replace(' ', '_')}",
-                headers={"Accept": "application/json"},
+            # Step 2: Fetch full content for the top result
+            top_title = results[0]["title"]
+            full_resp = await http.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "titles": top_title,
+                    "prop": "extracts|info",
+                    "exintro": False,        # Get full article not just intro
+                    "explaintext": True,     # Plain text no HTML
+                    "inprop": "url",
+                    "format": "json",
+                },
             )
-            summary_data = summary_resp.json()
-            extract = summary_data.get("extract", "")
-            page_url = summary_data.get("content_urls", {}).get("desktop", {}).get("page", "")
+            full_data = full_resp.json()
+            pages = full_data.get("query", {}).get("pages", {})
+            page = next(iter(pages.values()))
+            full_extract = page.get("extract", "")
+            page_url = page.get("fullurl", f"https://en.wikipedia.org/wiki/{top_title.replace(' ', '_')}")
 
-            # Trim to requested number of sentences
-            sentence_list = extract.split(". ")
-            trimmed = ". ".join(sentence_list[:sentences])
-            if not trimmed.endswith("."):
-                trimmed += "."
+            # Trim to ~2000 chars to keep context rich but not too long
+            if len(full_extract) > 2000:
+                full_extract = full_extract[:2000] + "..."
 
-            return {"found": True, "title": title, "summary": trimmed, "url": page_url}
+            # Step 3: Also get summaries of related results (2nd and 3rd)
+            related = []
+            for r in results[1:3]:
+                try:
+                    rel_resp = await http.get(
+                        f"https://en.wikipedia.org/api/rest_v1/page/summary/{r['title'].replace(' ', '_')}",
+                        headers={"Accept": "application/json"},
+                    )
+                    rel_data = rel_resp.json()
+                    rel_extract = rel_data.get("extract", "")
+                    if rel_extract:
+                        related.append({"title": r["title"], "summary": rel_extract[:400]})
+                except Exception:
+                    pass
+
+            return {
+                "found": True,
+                "title": top_title,
+                "summary": full_extract,
+                "url": page_url,
+                "related": related,
+            }
 
     except Exception as e:
         return {"found": False, "title": "", "summary": "", "url": "", "error": str(e)}
@@ -192,11 +220,18 @@ async def chat(req: ChatRequest):
 
     wiki_context = ""
     if wiki["found"]:
+        related_text = ""
+        for r in wiki.get("related", []):
+            related_text += f"\n\nRelated - {r['title']}:\n{r['summary']}"
+
         wiki_context = f"""
 WIKIPEDIA DATA (real-time):
-Title: {wiki['title']}
-Summary: {wiki['summary']}
+Main Topic: {wiki['title']}
 Source: {wiki['url']}
+
+Full Content:
+{wiki['summary']}
+{related_text}
 """
         save_wiki_log(req.session_id, req.message, wiki["title"], wiki["url"])
 
