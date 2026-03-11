@@ -143,6 +143,8 @@ def read_session_history(session_id: str) -> list[dict]:
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+    image_base64: str = None
+    image_type: str = "image/jpeg"
 
 class ChatResponse(BaseModel):
     reply: str
@@ -204,7 +206,16 @@ Instructions:
 - Always be concise, friendly, and helpful
 - If you cite Wikipedia, mention it as your source"""
 
-    messages = history if history else [{"role": "user", "content": req.message}]
+    # Build message content - support images
+    if req.image_base64:
+        user_content = [
+            {"type": "image", "source": {"type": "base64", "media_type": req.image_type, "data": req.image_base64}},
+            {"type": "text", "text": req.message if req.message.strip() else "Analyse this image and estimate the person's age. Describe their approximate age range and key features indicating their age. Note this is an estimate only."}
+        ]
+        messages = [{"role": "user", "content": user_content}]
+        system_prompt = "You are an AI image analysis assistant. When shown a photo of a person, estimate their age range based on visible features like skin, hair, and facial structure. Always clarify this is an AI estimate. Be respectful and professional. If no person is visible, say so politely."
+    else:
+        messages = history if history else [{"role": "user", "content": req.message}]
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",

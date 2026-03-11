@@ -105,6 +105,13 @@
   .send-btn:hover { transform: scale(1.05); box-shadow: 0 0 20px var(--glow); }
   .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   .send-btn svg { width: 15px; height: 15px; fill: white; }
+  .attach-btn { width: 36px; height: 36px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; font-size: 16px; }
+  .attach-btn:hover { border-color: var(--accent); background: var(--glow); }
+  #fileInput { display: none; }
+  .image-preview { max-width: 200px; max-height: 150px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 6px; display: block; }
+  .preview-wrap { position: relative; display: inline-block; }
+  .preview-remove { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent2); border: none; color: white; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  .img-bubble { max-width: 220px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 6px; display: block; }
   .input-hint { text-align: center; font-size: 0.6rem; color: var(--muted); margin-top: 8px; letter-spacing: 0.04em; }
 
   /* KB PANEL */
@@ -169,8 +176,11 @@
   </div>
 </div>
 
+<div id="imagePreviewArea" style="display:none; padding: 8px 20px 0; max-width:760px; margin: 0 auto;"></div>
 <div class="input-area">
   <div class="input-inner">
+    <input type="file" id="fileInput" accept="image/*" onchange="handleImageSelect(event)" />
+    <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach image">📎</button>
     <textarea id="msgInput" rows="1" placeholder="Type your message… (Enter to send)"></textarea>
     <button class="send-btn" id="sendBtn" onclick="sendMessage()">
       <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
@@ -201,6 +211,8 @@
 
 <script>
   const API_BASE = "https://ai-chatbot-vynp.onrender.com";
+  let selectedImageBase64 = null;
+  let selectedImageType = null;
   let sessionId = "session_" + Math.random().toString(36).slice(2, 10);
   document.getElementById("sessionBadge").textContent = "session: " + sessionId.slice(8);
 
@@ -308,6 +320,34 @@
     setTimeout(() => { toast.style.display = "none"; }, 4000);
   }
 
+  function handleImageSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      selectedImageBase64 = dataUrl.split(",")[1];
+      selectedImageType = file.type;
+      // Show preview
+      const area = document.getElementById("imagePreviewArea");
+      area.style.display = "block";
+      area.innerHTML = `<div class="preview-wrap">
+        <img src="${dataUrl}" class="image-preview" />
+        <button class="preview-remove" onclick="removeImage()">✕</button>
+      </div>`;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
+  function removeImage() {
+    selectedImageBase64 = null;
+    selectedImageType = null;
+    const area = document.getElementById("imagePreviewArea");
+    area.style.display = "none";
+    area.innerHTML = "";
+  }
+
   async function sendMessage() {
     const text = input.value.trim();
     if (!text || isLoading) return;
@@ -315,13 +355,27 @@
     sendBtn.disabled = true;
     input.value = "";
     input.style.height = "auto";
-    appendMessage("user", text);
+    // Show user message with image if attached
+    if (selectedImageBase64) {
+      const imgDataUrl = "data:" + selectedImageType + ";base64," + selectedImageBase64;
+      appendMessageWithImage("user", text, imgDataUrl);
+    } else {
+      appendMessage("user", text);
+    }
     showTyping();
     try {
+      const payload = {
+        session_id: sessionId,
+        message: text || "Please analyse this image.",
+        image_base64: selectedImageBase64 || null,
+        image_type: selectedImageType || null,
+      };
+      const imgSnapshot = selectedImageBase64;
+      removeImage();
       const res = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, message: text }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error("API error " + res.status);
       const data = await res.json();
@@ -336,6 +390,22 @@
       sendBtn.disabled = false;
       input.focus();
     }
+  }
+
+  function appendMessageWithImage(role, text, imgSrc) {
+    hideEmpty();
+    const row = document.createElement("div");
+    row.className = "msg-row " + role;
+    const avatar = document.createElement("div");
+    avatar.className = "avatar user";
+    avatar.textContent = "👤";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble user";
+    bubble.innerHTML = `<img src="${imgSrc}" class="img-bubble" />${text ? `<div>${escapeHtml(text)}</div>` : ""}<div class="bubble-time">${now()}</div>`;
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    wrap.appendChild(row);
+    wrap.scrollTop = wrap.scrollHeight;
   }
 
   function sendSuggestion(text) { input.value = text; sendMessage(); }
