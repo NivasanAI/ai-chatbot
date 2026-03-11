@@ -12,6 +12,13 @@ from pathlib import Path
 
 app = FastAPI(title="Excel AI Chatbot API with Wikipedia")
 
+# Increase max request size to 20MB for image uploads
+from starlette.middleware.base import BaseHTTPMiddleware
+class LimitUploadSize(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        request._body = await request.body()
+        return await call_next(request)
+
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
